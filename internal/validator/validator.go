@@ -97,7 +97,7 @@ func (v *Validator) NewFromConfig(cfg *Config) error {
 	defer v.logger.Debug().Msg("configuration done")
 
 	// configure solana rpc clients all in one
-	err := v.configureRPCClient(cfg.RPCAddress, cfg.Cluster)
+	err := v.configureRPCClient(cfg.RPCAddress, cfg.Cluster, cfg.ClusterRPCURL, cfg.AverageSlotDuration)
 	if err != nil {
 		return err
 	}
@@ -214,11 +214,9 @@ func (v *Validator) Failover(params FailoverParams) (err error) {
 }
 
 // configureRPCClient configures the solana rpc client
-func (v *Validator) configureRPCClient(localRPCURL, solanaClusterName string) error {
-	// configure solana rpc clients all in one
-	err := utils.ValidateCluster(solanaClusterName)
-	if err != nil {
-		return err
+func (v *Validator) configureRPCClient(localRPCURL, solanaClusterName, clusterRPCURL, averageSlotDuration string) error {
+	if solanaClusterName == "" {
+		return fmt.Errorf("cluster is required")
 	}
 
 	if !utils.IsValidURLWithPort(localRPCURL) {
@@ -228,18 +226,38 @@ func (v *Validator) configureRPCClient(localRPCURL, solanaClusterName string) er
 		)
 	}
 
-	solanaClusterRPCURL := constants.SolanaClusters[solanaClusterName].RPC
+	// determine the cluster RPC URL: use built-in URL for known clusters,
+	// otherwise require cluster_rpc_url from config
+	var solanaClusterRPCURL string
+	if utils.IsKnownCluster(solanaClusterName) {
+		solanaClusterRPCURL = constants.SolanaClusters[solanaClusterName].RPC
+	} else {
+		if clusterRPCURL == "" {
+			return fmt.Errorf(
+				"cluster_rpc_url is required for custom cluster %q (known clusters: %s)",
+				solanaClusterName,
+				strings.Join(constants.SolanaClusterNames, ", "),
+			)
+		}
+		solanaClusterRPCURL = clusterRPCURL
+	}
+
+	avgSlotDuration, err := time.ParseDuration(averageSlotDuration)
+	if err != nil {
+		return fmt.Errorf("invalid average_slot_duration %q: %w", averageSlotDuration, err)
+	}
 
 	v.logger.Debug().
 		Str("cluster", solanaClusterName).
 		Str("local_rpc_url", localRPCURL).
-		Str("network_rpc_url", solanaClusterRPCURL).
+		Str("cluster_rpc_url", solanaClusterRPCURL).
 		Msg("rpc client configured")
 
 	v.RPCAddress = localRPCURL
 	v.solanaRPCClient = v.NewSolanaRPCClient(solana.NewClientParams{
-		LocalRPCURL:   localRPCURL,
-		NetworkRPCURL: solanaClusterRPCURL,
+		LocalRPCURL:         localRPCURL,
+		ClusterRPCURL:       solanaClusterRPCURL,
+		AverageSlotDuration: avgSlotDuration,
 	})
 
 	return nil

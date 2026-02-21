@@ -74,7 +74,7 @@ func (tv *TestValidator) NewFromConfig(cfg *Config) error {
 	defer tv.logger.Debug().Msg("configuration done")
 
 	// configure solana rpc clients all in one
-	err := tv.configureRPCClient(cfg.RPCAddress, cfg.Cluster)
+	err := tv.configureRPCClient(cfg.RPCAddress, cfg.Cluster, cfg.ClusterRPCURL, cfg.AverageSlotDuration)
 	if err != nil {
 		return err
 	}
@@ -171,7 +171,7 @@ func createTestKeyFile(t *testing.T, tempDir, filename string) string {
 	require.NoError(t, err)
 
 	// Write the key to file
-	err = os.WriteFile(keyFile, keyData, 0600)
+	err = os.WriteFile(keyFile, keyData, 0o600)
 	require.NoError(t, err)
 
 	return keyFile
@@ -184,7 +184,7 @@ func createDummyAgaveValidator(t *testing.T) string {
 	dummyBin := filepath.Join(tempDir, "agave-validator")
 
 	// Create a simple executable file
-	err := os.WriteFile(dummyBin, []byte("#!/bin/sh\necho 'dummy agave-validator'"), 0755)
+	err := os.WriteFile(dummyBin, []byte("#!/bin/sh\necho 'dummy agave-validator'"), 0o755)
 	require.NoError(t, err)
 
 	// Add the temp directory to PATH
@@ -214,28 +214,46 @@ func createTestValidator(t *testing.T) *TestValidator {
 func TestConfigureRPCClient_Success(t *testing.T) {
 	validator := createTestValidator(t)
 
-	err := validator.configureRPCClient("http://localhost:8899", "testnet")
+	err := validator.configureRPCClient("http://localhost:8899", "testnet", "", "400ms")
 
 	assert.NoError(t, err)
 	assert.NotNil(t, validator.solanaRPCClient)
 }
 
-func TestConfigureRPCClient_InvalidCluster(t *testing.T) {
+func TestConfigureRPCClient_EmptyCluster(t *testing.T) {
 	validator := createTestValidator(t)
 
-	err := validator.configureRPCClient("http://localhost:8899", "invalid-cluster")
+	err := validator.configureRPCClient("http://localhost:8899", "", "", "400ms")
 
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid cluster")
+	assert.Contains(t, err.Error(), "cluster is required")
 }
 
 func TestConfigureRPCClient_InvalidRPCAddress(t *testing.T) {
 	validator := createTestValidator(t)
 
-	err := validator.configureRPCClient("invalid-address", "testnet")
+	err := validator.configureRPCClient("invalid-address", "testnet", "", "400ms")
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid rpc address")
+}
+
+func TestConfigureRPCClient_CustomCluster_Success(t *testing.T) {
+	validator := createTestValidator(t)
+
+	err := validator.configureRPCClient("http://localhost:8899", "custom-mainnet", "https://mainnet.custom.io", "400ms")
+
+	assert.NoError(t, err)
+	assert.NotNil(t, validator.solanaRPCClient)
+}
+
+func TestConfigureRPCClient_CustomCluster_MissingClusterRPCURL(t *testing.T) {
+	validator := createTestValidator(t)
+
+	err := validator.configureRPCClient("http://localhost:8899", "custom-mainnet", "", "400ms")
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "cluster_rpc_url is required")
 }
 
 // ============================================================================
@@ -270,7 +288,7 @@ func TestConfigureLedgerDir_Success(t *testing.T) {
 	tempDir := t.TempDir()
 	ledgerDir := filepath.Join(tempDir, "ledger")
 
-	err := os.MkdirAll(ledgerDir, 0755)
+	err := os.MkdirAll(ledgerDir, 0o755)
 	require.NoError(t, err)
 
 	err = validator.configureLedgerDir(ledgerDir)
@@ -293,7 +311,7 @@ func TestConfigureLedgerDir_NotADirectory(t *testing.T) {
 	tempDir := t.TempDir()
 	filePath := filepath.Join(tempDir, "not-a-dir")
 
-	err := os.WriteFile(filePath, []byte("not a directory"), 0644)
+	err := os.WriteFile(filePath, []byte("not a directory"), 0o644)
 	require.NoError(t, err)
 
 	err = validator.configureLedgerDir(filePath)
@@ -530,9 +548,9 @@ func TestNewFromConfig_Success(t *testing.T) {
 	towerDir := filepath.Join(tempDir, "tower")
 
 	// Create directories
-	err := os.MkdirAll(ledgerDir, 0755)
+	err := os.MkdirAll(ledgerDir, 0o755)
 	require.NoError(t, err)
-	err = os.MkdirAll(towerDir, 0755)
+	err = os.MkdirAll(towerDir, 0o755)
 	require.NoError(t, err)
 
 	// create test agave-validator binary
@@ -544,10 +562,11 @@ func TestNewFromConfig_Success(t *testing.T) {
 
 	// Create config
 	cfg := &Config{
-		Bin:        agaveValidatorBin,
-		Cluster:    "testnet",
-		RPCAddress: "http://localhost:8899",
-		LedgerDir:  ledgerDir,
+		Bin:                 agaveValidatorBin,
+		Cluster:             "testnet",
+		RPCAddress:          "http://localhost:8899",
+		AverageSlotDuration: "400ms",
+		LedgerDir:           ledgerDir,
 		Identities: identities.Config{
 			Active:  activeKeyFile,
 			Passive: passiveKeyFile,
